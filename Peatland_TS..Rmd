@@ -1,0 +1,178 @@
+---
+title: "Peatland Time Series - Turberas"
+author: "Alex Alvarez"
+date: "2022-11-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+set.seed(42) # Reproducibilidad
+pacman::p_load(caret, raster, ape, RStoolbox, vegan, lubridate, dplyr, forecast, factoextra, ggpubr, clustertend, NbClust)
+
+
+```
+
+1. Elija un ecosistema: bosque o turbera.
+
+```{r}
+data <- read.csv('Peatland_daily.csv', header = T)
+summary(data)
+glimpse(data)
+head(data)
+```
+
+2. Describa la serie de tiempo de la GPP y ET para este ecosistema (serie
+de tiempo y autocorrelación temporal).
+
+```{r}
+# Eliminar las observaciones con valores ausentes
+data <- na.omit(data[complete.cases(data[, c("GPP", "ET")]), ])
+
+# Crear objetos para la GPP y ET
+gpp <- data$GPP
+et <- data$ET
+
+# Crear una serie temporal para la GPP y ET utilizando la columna "date"
+gpp_ts <- ts(gpp, start = c(year(data$date[1]), month(data$date[1]), day(data$date[1])), frequency = 365.25)
+et_ts <- ts(et, start = c(year(data$date[1]), month(data$date[1]), day(data$date[1])), frequency = 365.25)
+
+# Calcular la autocorrelación temporal para la GPP y ET
+gpp_acf <- acf(gpp_ts)
+et_acf <- acf(et_ts)
+
+# Graficar la serie temporal de la GPP y la autocorrelación temporal
+plot(gpp_ts, main = "Serie temporal de la GPP")
+
+# Graficar la serie temporal de la ET y la autocorrelación temporal
+plot(et_ts, main = "Serie temporal de la ET")
+
+```
+
+
+3. Prediga la tendencia lineal de GPP y ET.
+```{r}
+# Predecir la tendencia lineal de la GPP y la ET
+gpp_trend <- lm(gpp_ts ~ time(gpp_ts))
+et_trend <- lm(et_ts ~ time(et_ts))
+
+# Mostrar el resumen del modelo lineal para la GPP
+summary(gpp_trend)
+
+# Mostrar el resumen del modelo lineal para la ET
+summary(et_trend)
+
+# Graficar la tendencia lineal para la GPP y la ET
+plot(gpp_ts, main = "Tendencia lineal de la GPP")
+abline(gpp_trend, col = "red")
+
+plot(et_ts, main = "Tendencia lineal de la ET")
+abline(et_trend, col = "red")
+```
+
+
+
+4. Prediga (forecasting) la tendencia temporal de GPP y ET para 5 periodos
+con Naive Walk forecastin. Revise los residuos del modelo
+
+```{r}
+# Realizar un forecasting de la tendencia temporal de la GPP y la ET para 5 periodos
+gpp_forecast <- snaive(gpp_ts, h = 5 * frequency(gpp_ts))
+et_forecast <- snaive(et_ts, h = 5 * frequency(et_ts))
+
+# Revisar los residuos del modelo
+checkresiduals(gpp_forecast)
+checkresiduals(et_forecast)
+
+# Graficar el forecasting para la GPP y la ET
+plot(gpp_forecast, main = "forecasting de la GPP")
+plot(et_forecast, main = "forecasting de la ET")
+```
+
+
+5. Haga un PCA usando las variables: Rg, Ta, VPD, U, P, Pa, SWC.
+```{r}
+# Realizar un análisis de componentes principales (PCA) con las variables Rg, Ta, VPD, U, P, Pa, SWC
+pca_data <- data[, c("Rg", "Ta", "VPD", "U", "P", "Pa", "SWC")]
+pca1 <- prcomp(pca_data, scale = T)
+pca1
+```
+
+6. Describa la varianza explicada por componente, y la varianza
+acumulada.
+```{r}
+# Describir la varianza explicada por cada componente y la varianza acumulada
+summary(pca1)
+
+# Graficar la varianza explicada por cada componente y la varianza acumulada
+plot(pca1, main = "Varianza explicada por componente")
+
+```
+
+7. Ajuste un modelo de vectores con al función envfit() de "vegan" con las
+variables GPP y ET. ¿Es posible determinar un patrón en los valores de
+Rg, Ta, VPD, U, P, Pa, SWC con mas ET y GPP?
+
+```{r}
+
+# Realizar un análisis de vectores con la función envfit() de vegan con las variables GPP y ET
+vectors <- data[, c("GPP", "ET","Rg", "Ta", "VPD", "U", "P", "Pa", "SWC")]
+
+env1 <- envfit(pca1, vectors)
+env1
+
+ordiplot(pca1, main = "Distribucion en el espacio muestral")
+plot(env1, main = "Ajuste de modelo", col= "blue", lwd = 2)
+fviz_pca_biplot(pca1, label = "var")
+
+
+```
+
+
+8. Haga un análisis de clustering con K-MEANS y determine el mejor
+numero de grupos según el indice de silhouette. ¿Éstas clases explican
+un patrón concreto temporal?, por ejemplo ¿Qué meses corresponden a
+que clusters?
+
+```{r}
+# Realizar un análisis de clustering con k-means y determinar el mejor número de grupos según el índice de silhouette
+kmeans_data <- pca1$x[,1:2]
+
+# Utilizar NbClust para determinar el número óptimo de clusters
+kmeans_optimal_clusters <- NbClust(kmeans_data, diss = NULL, distance = "euclidean", method = "kmeans", index = "silhouette")
+
+# Graficar el índice de silhouette para determinar el mejor número de grupos
+fviz_nbclust(kmeans_data, FUNcluster = kmeans, method = "silhouette", k.max = 10) +
+  labs(title = "Numero optimo de clusters")
+
+# Utilizar el número óptimo de clusters para realizar el análisis de clustering con k-means
+kmeans_clusters <- kmeans(kmeans_data, kmeans_optimal_clusters$Best.nc[1])
+
+
+# Determinar a qué meses corresponden cada uno de los grupos obtenidos
+kmeans_data$cluster <- kmeans_clusters$cluster
+kmeans_data$month <- factor(month(data$date))
+kmeans_data <- as.data.frame(kmeans_data)
+
+# Graficar los meses correspondientes a cada cluster
+kmeans_summary <- kmeans_data %>%
+  group_by(cluster, month) %>%
+  summarise(count = n()) %>%
+  ungroup()
+
+ggplot(kmeans_summary, aes(x = month, y = count, fill = as.factor(cluster))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Meses correspondientes a cada cluster")
+
+# Calcular estadísticas descriptivas de los meses correspondientes a cada cluster
+meses_clusters <- aggregate(month ~ cluster, data = kmeans_data, summary)
+print(meses_clusters)
+
+```
+
+
+
